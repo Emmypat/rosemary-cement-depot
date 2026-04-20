@@ -65,7 +65,7 @@ function ProductForm({ product, onClose, onSave }) {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Price (GHS)</label>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Price (₦)</label>
           <input type="number" step="0.01" {...register('price', { required: 'Required', min: 0 })}
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
         </div>

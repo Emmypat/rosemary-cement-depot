@@ -1,8 +1,8 @@
 import { format, parseISO } from 'date-fns'
 
 export function formatCurrency(amount) {
-  if (amount == null) return 'GHS 0.00'
-  return `GHS ${Number(amount).toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  if (amount == null) return '₦0.00'
+  return `₦${Number(amount).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export function formatDate(dateStr) {

@@ -30,7 +30,7 @@ function PaymentModal({ receivable, onClose, onPay }) {
             <p className="text-sm font-semibold text-orange-700">Balance: {formatCurrency(remaining)}</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Amount Paying Now (GHS)</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Amount Paying Now (₦)</label>
             <input type="number" step="0.01" max={remaining}
               {...register('amount', { required: 'Required', min: { value: 0.01, message: 'Must be > 0' }, max: { value: remaining, message: `Max ${remaining}` } })}
               className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />

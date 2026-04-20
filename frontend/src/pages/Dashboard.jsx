@@ -23,13 +23,13 @@ const MOCK = {
   total_products: 8,
   low_stock_count: 2,
   today_sales: 4,
-  today_revenue: 12500,
-  total_receivables: 45200,
+  today_revenue: 125000,
+  total_receivables: 452000,
   overdue_count: 3,
   recent_sales: [
-    { id: 1, customer_name: 'John Mensah', total: 3200, payment_method: 'cash', created_at: new Date().toISOString() },
-    { id: 2, customer_name: 'Abena Owusu', total: 5600, payment_method: 'mobile_money', created_at: new Date().toISOString() },
-    { id: 3, customer_name: 'Kofi Asante', total: 1800, payment_method: 'card', created_at: new Date().toISOString() },
+    { id: 1, customer_name: 'John Adebayo', total: 32000, payment_method: 'cash', created_at: new Date().toISOString() },
+    { id: 2, customer_name: 'Ngozi Okonkwo', total: 56000, payment_method: 'mobile_money', created_at: new Date().toISOString() },
+    { id: 3, customer_name: 'Emeka Okafor', total: 18000, payment_method: 'card', created_at: new Date().toISOString() },
   ],
   low_stock_products: [
     { id: 1, name: 'OPC 42.5 (50kg)', stock_qty: 15, reorder_level: 50, unit: 'bags' },
