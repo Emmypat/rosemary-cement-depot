@@ -35,3 +35,6 @@ npm-debug.log*
 # Python
 *.pyo
 .pytest_cache/
+backend/.env
+backend/.venv/
+backend/cementtrack.db

@@ -1,0 +1,109 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: CementTrack API – Lambda + API Gateway (eu-west-1)
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Runtime: python3.12
+    Environment:
+      Variables:
+        ENVIRONMENT: production
+        AWS_REGION_NAME: eu-west-1
+        SES_SENDER_EMAIL: patkatech@gmail.com
+        S3_BUCKET_NAME: !Ref ReceiptsBucket
+        DATABASE_URL: !Sub
+          - "postgresql://${DBUser}:${DBPassword}@${DBHost}:5432/${DBName}"
+          - DBUser: !Ref DBUsername
+            DBPassword: !Ref DBPassword
+            DBHost: !Ref DBHost
+            DBName: !Ref DBName
+
+Parameters:
+  DBHost:
+    Type: String
+    Description: RDS PostgreSQL endpoint
+  DBName:
+    Type: String
+    Default: cementtrack
+  DBUsername:
+    Type: String
+    Default: cementadmin
+  DBPassword:
+    Type: String
+    NoEcho: true
+  VpcSubnetIds:
+    Type: CommaDelimitedList
+    Description: Subnet IDs for Lambda VPC config
+  VpcSecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: Security group IDs for Lambda VPC config
+
+Resources:
+
+  # S3 bucket for receipt PDFs
+  ReceiptsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "cementtrack-receipts-${AWS::AccountId}"
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldReceipts
+            Status: Enabled
+            ExpirationInDays: 365
+
+  # Lambda function
+  CementTrackFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: app.main.handler
+      Description: CementTrack FastAPI backend
+      VpcConfig:
+        SubnetIds: !Ref VpcSubnetIds
+        SecurityGroupIds: !Ref VpcSecurityGroupIds
+      Policies:
+        - AWSLambdaVPCAccessExecutionRole
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendRawEmail
+                - ses:SendEmail
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+              Resource: !Sub "arn:aws:s3:::cementtrack-receipts-${AWS::AccountId}/*"
+      Events:
+        ApiRoot:
+          Type: Api
+          Properties:
+            Path: /
+            Method: ANY
+            RestApiId: !Ref CementTrackApi
+        ApiProxy:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            RestApiId: !Ref CementTrackApi
+
+  # API Gateway
+  CementTrackApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'*'"
+        AllowHeaders: "'*'"
+        AllowOrigin: "'*'"
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${CementTrackApi}.execute-api.eu-west-1.amazonaws.com/prod"
+  ReceiptsBucketName:
+    Description: S3 bucket for receipt PDFs
+    Value: !Ref ReceiptsBucket
