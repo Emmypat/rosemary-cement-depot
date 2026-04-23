@@ -38,3 +38,7 @@ npm-debug.log*
 backend/.env
 backend/.venv/
 backend/cementtrack.db
+
+# Lambda build artefacts (regenerated at deploy time)
+backend/lambda.zip
+backend/lambda_package/

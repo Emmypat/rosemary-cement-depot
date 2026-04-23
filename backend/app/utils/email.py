@@ -1,17 +1,21 @@
-import boto3
-from botocore.exceptions import ClientError
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.application import MIMEApplication
 from app.config import settings
+
+SMTP_PORT = 587
 
 
 def send_receipt_email(to_email: str, customer_name: str, sale_id: int, pdf_bytes: bytes) -> bool:
-    """Send a receipt PDF via AWS SES."""
-    import email as email_lib
-    from email.mime.multipart import MIMEMultipart
-    from email.mime.text import MIMEText
-    from email.mime.application import MIMEApplication
+    if not settings.ses_smtp_user or not settings.ses_smtp_password:
+        print("SES SMTP credentials not configured")
+        return False
+
+    smtp_host = f"email-smtp.{settings.aws_region}.amazonaws.com"
 
     msg = MIMEMultipart("mixed")
-    msg["Subject"] = f"Your Receipt – Sale #{sale_id:05d} | CementTrack"
+    msg["Subject"] = f"Your Receipt - Sale #{sale_id:05d} | CementTrack"
     msg["From"] = settings.ses_sender_email
     msg["To"] = to_email
 
@@ -26,14 +30,11 @@ def send_receipt_email(to_email: str, customer_name: str, sale_id: int, pdf_byte
         <p>Dear <strong>{customer_name or "Customer"}</strong>,</p>
         <p>Thank you for your purchase. Please find your receipt (Sale <strong>#{sale_id:05d}</strong>) attached as a PDF.</p>
         <p style="color: #64748b; font-size: 14px;">
-          If you have any questions about this receipt, please contact us at
-          <a href="mailto:{settings.ses_sender_email}">{settings.ses_sender_email}</a>.
+          For enquiries contact <a href="mailto:{settings.ses_sender_email}">{settings.ses_sender_email}</a>.
         </p>
       </div>
       <hr style="border: none; border-top: 1px solid #e2e8f0;" />
-      <p style="font-size: 12px; color: #94a3b8; text-align: center;">
-        CementTrack Business Manager · Powered by AWS
-      </p>
+      <p style="font-size: 12px; color: #94a3b8; text-align: center;">CementTrack Business Manager</p>
     </body>
     </html>
     """
@@ -47,13 +48,11 @@ def send_receipt_email(to_email: str, customer_name: str, sale_id: int, pdf_byte
     msg.attach(attachment)
 
     try:
-        ses = boto3.client("ses", region_name=settings.aws_region)
-        ses.send_raw_email(
-            Source=settings.ses_sender_email,
-            Destinations=[to_email],
-            RawMessage={"Data": msg.as_bytes()},
-        )
+        with smtplib.SMTP(smtp_host, SMTP_PORT, timeout=15) as server:
+            server.starttls()
+            server.login(settings.ses_smtp_user, settings.ses_smtp_password)
+            server.sendmail(settings.ses_sender_email, [to_email], msg.as_bytes())
         return True
-    except ClientError as e:
-        print(f"SES error: {e.response['Error']['Message']}")
+    except Exception as e:
+        print(f"SMTP error: {e}")
         return False

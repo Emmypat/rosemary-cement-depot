@@ -17,6 +17,9 @@ class Sale(Base):
     total: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     is_credit: Mapped[bool] = mapped_column(Boolean, default=False)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    declined: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    verified_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     customer: Mapped["Customer | None"] = relationship("Customer", back_populates="sales")

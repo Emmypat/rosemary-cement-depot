@@ -7,10 +7,31 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+// Attach JWT to every request
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('ct_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    const message = err.response?.data?.detail || err.message || 'An error occurred'
+    if (err.response?.status === 401) {
+      localStorage.removeItem('ct_token')
+      localStorage.removeItem('ct_user')
+      window.location.href = '/login'
+      return Promise.reject(new Error('Session expired'))
+    }
+    const detail = err.response?.data?.detail
+    let message
+    if (Array.isArray(detail)) {
+      message = detail.map(d => d.msg || JSON.stringify(d)).join(', ')
+    } else {
+      message = detail || err.message || 'An error occurred'
+    }
     return Promise.reject(new Error(message))
   }
 )
@@ -23,6 +44,9 @@ export const inventoryApi = {
   update: (id, data) => api.put(`/inventory/${id}`, data),
   delete: (id) => api.delete(`/inventory/${id}`),
   adjustStock: (id, data) => api.post(`/inventory/${id}/adjust`, data),
+  getPendingChanges: () => api.get('/inventory/changes/pending'),
+  approveChange: (id) => api.post(`/inventory/changes/${id}/approve`),
+  rejectChange: (id) => api.post(`/inventory/changes/${id}/reject`),
 }
 
 // Customers
@@ -39,6 +63,7 @@ export const salesApi = {
   getOne: (id) => api.get(`/sales/${id}`),
   create: (data) => api.post('/sales', data),
   verify: (id) => api.post(`/sales/${id}/verify`),
+  decline: (id) => api.post(`/sales/${id}/decline`),
 }
 
 // Receivables

@@ -55,5 +55,8 @@ class SaleOut(BaseModel):
     total: float
     is_credit: bool
     verified: bool
+    declined: bool = False
+    created_by: str | None = None
+    verified_by: str | None = None
     created_at: datetime
     items: list[SaleItemOut] = []

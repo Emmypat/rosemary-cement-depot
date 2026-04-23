@@ -32,8 +32,8 @@ const MOCK = {
     { id: 3, customer_name: 'Emeka Okafor', total: 18000, payment_method: 'card', created_at: new Date().toISOString() },
   ],
   low_stock_products: [
-    { id: 1, name: 'OPC 42.5 (50kg)', stock_qty: 15, reorder_level: 50, unit: 'bags' },
-    { id: 2, name: 'Portland Cement (50kg)', stock_qty: 8, reorder_level: 30, unit: 'bags' },
+    { id: 1, name: 'Dangote Cement (50kg)', stock_qty: 0, reorder_level: 50, unit: 'bags' },
+    { id: 2, name: 'BUA Cement (50kg)', stock_qty: 0, reorder_level: 50, unit: 'bags' },
   ],
 }
 

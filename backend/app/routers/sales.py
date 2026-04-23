@@ -8,9 +8,11 @@ from app.models.customer import Customer
 from app.models.receivable import Receivable
 from app.models.receipt import Receipt
 from app.models.payment import Payment
+from app.models.user import User
 from app.schemas.sale import SaleCreate, SaleOut, SaleItemOut
 from app.utils.pdf import generate_receipt_pdf
 from app.utils.email import send_receipt_email
+from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/sales", tags=["sales"])
 
@@ -39,13 +41,16 @@ def _sale_to_out(sale: Sale) -> dict:
         total=float(sale.total),
         is_credit=sale.is_credit,
         verified=sale.verified,
+        declined=sale.declined if hasattr(sale, 'declined') else False,
+        created_by=sale.created_by if hasattr(sale, 'created_by') else None,
+        verified_by=sale.verified_by if hasattr(sale, 'verified_by') else None,
         created_at=sale.created_at,
         items=items,
     )
 
 
 @router.get("", response_model=list[SaleOut])
-def get_all(db: Session = Depends(get_db)):
+def get_all(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     sales = (
         db.query(Sale)
         .options(joinedload(Sale.items).joinedload(SaleItem.product))
@@ -56,12 +61,42 @@ def get_all(db: Session = Depends(get_db)):
 
 
 @router.get("/{sale_id}", response_model=SaleOut)
-def get_one(sale_id: int, db: Session = Depends(get_db)):
+def get_one(sale_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return _sale_to_out(_load_sale(sale_id, db))
 
 
+def _publish_receipt_to_sns(sale_id: int, sale_dict: dict, customer_email: str | None, customer_name: str | None):
+    import boto3, json, os
+    from datetime import datetime
+    from botocore.config import Config
+    if isinstance(sale_dict.get("created_at"), datetime):
+        sale_dict = {**sale_dict, "created_at": sale_dict["created_at"].isoformat()}
+    topic_arn = os.environ.get("SNS_RECEIPT_TOPIC_ARN")
+    if not topic_arn:
+        print("SNS_RECEIPT_TOPIC_ARN not set, skipping receipt")
+        return
+    try:
+        client = boto3.client(
+            "sns",
+            region_name=os.environ.get("APP_REGION", "eu-west-1"),
+            config=Config(connect_timeout=5, read_timeout=5, retries={"max_attempts": 1}),
+        )
+        client.publish(
+            TopicArn=topic_arn,
+            Message=json.dumps({
+                "sale_id": sale_id,
+                "sale_dict": sale_dict,
+                "customer_email": customer_email,
+                "customer_name": customer_name,
+            }),
+        )
+        print(f"Receipt SNS publish triggered for sale {sale_id}")
+    except Exception as e:
+        print(f"SNS publish error (non-fatal): {e}")
+
+
 @router.post("", response_model=SaleOut, status_code=201)
-def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
+def create_sale(data: SaleCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # Validate stock
     for item in data.items:
         product = db.get(Product, item.product_id)
@@ -79,6 +114,7 @@ def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
         payment_reference=data.payment_reference,
         total=data.total,
         is_credit=data.is_credit,
+        created_by=current_user.username,
     )
     db.add(sale)
     db.flush()
@@ -118,16 +154,13 @@ def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
             due_date=(datetime.now(timezone.utc) + timedelta(days=30)).date(),
         )
         db.add(receivable)
-        # Update customer balance
         if data.customer_id:
             customer = db.get(Customer, data.customer_id)
             if customer:
                 customer.balance_owed = float(customer.balance_owed) + data.total
 
     db.commit()
-    db.refresh(sale)
 
-    # Generate and email receipt
     sale_loaded = _load_sale(sale.id, db)
     sale_dict = {
         "id": sale.id,
@@ -139,41 +172,53 @@ def create_sale(data: SaleCreate, db: Session = Depends(get_db)):
         "is_credit": sale.is_credit,
         "created_at": sale.created_at,
         "items": [
-            {
-                "name": item.product.name if item.product else "Unknown",
-                "qty": item.qty,
-                "unit_price": float(item.unit_price),
-                "subtotal": float(item.subtotal),
-            }
+            {"name": item.product.name if item.product else "Unknown",
+             "qty": item.qty, "unit_price": float(item.unit_price), "subtotal": float(item.subtotal)}
             for item in sale_loaded.items
         ],
     }
 
-    pdf_bytes = generate_receipt_pdf(sale_dict)
-
-    emailed_to = None
-    sent_at = None
-    if sale.customer_email:
-        success = send_receipt_email(sale.customer_email, sale.customer_name or "Customer", sale.id, pdf_bytes)
-        if success:
-            emailed_to = sale.customer_email
-            sent_at = datetime.now(timezone.utc)
-
-    receipt = Receipt(
-        sale_id=sale.id,
-        emailed_to=emailed_to,
-        sent_at=sent_at,
-    )
-    db.add(receipt)
-    db.commit()
+    _publish_receipt_to_sns(sale.id, sale_dict, sale.customer_email, sale.customer_name)
 
     return _sale_to_out(sale_loaded)
 
 
 @router.post("/{sale_id}/verify", response_model=SaleOut)
-def verify_sale(sale_id: int, db: Session = Depends(get_db)):
+def verify_sale(sale_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     sale = _load_sale(sale_id, db)
+    if sale.declined:
+        raise HTTPException(400, "Cannot verify a declined sale")
+    if sale.created_by and sale.created_by == current_user.username:
+        raise HTTPException(400, "A sale must be verified by a different user than the one who recorded it")
     sale.verified = True
+    sale.verified_by = current_user.username
     db.commit()
-    db.refresh(sale)
+    return _sale_to_out(_load_sale(sale_id, db))
+
+
+@router.post("/{sale_id}/decline", response_model=SaleOut)
+def decline_sale(sale_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    sale = _load_sale(sale_id, db)
+    if sale.verified:
+        raise HTTPException(400, "Cannot decline an already verified sale")
+    if sale.declined:
+        raise HTTPException(400, "Sale is already declined")
+
+    sale.declined = True
+
+    # Restore inventory stock
+    for item in sale.items:
+        product = db.get(Product, item.product_id)
+        if product:
+            product.stock_qty += item.qty
+
+    # Cancel receivable if credit sale
+    if sale.is_credit and sale.receivable:
+        if sale.customer_id:
+            customer = db.get(Customer, sale.customer_id)
+            if customer:
+                customer.balance_owed = max(0, float(customer.balance_owed) - float(sale.total))
+        db.delete(sale.receivable)
+
+    db.commit()
     return _sale_to_out(_load_sale(sale_id, db))

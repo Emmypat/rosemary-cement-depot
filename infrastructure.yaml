@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CementTrack - Full Infrastructure (eu-west-1)
+
+Parameters:
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: RDS master password
+  LambdaS3Bucket:
+    Type: String
+    Default: cementtrack-lambda-106083617032
+  LambdaS3Key:
+    Type: String
+    Default: lambda.zip
+  VpcId:
+    Type: String
+    Default: vpc-0bc643f6252bd60ef
+  Subnet1:
+    Type: String
+    Default: subnet-0543ea06c13cf79cf
+  Subnet2:
+    Type: String
+    Default: subnet-0e370241abad2ba72
+  Subnet3:
+    Type: String
+    Default: subnet-0e930669ce1b1e6d2
+
+Resources:
+
+  # ── Security Groups ────────────────────────────────────────────────
+  LambdaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: CementTrack Lambda SG
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: cementtrack-lambda-sg
+
+  RdsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: CementTrack RDS SG - allow Lambda
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSG
+      Tags:
+        - Key: Name
+          Value: cementtrack-rds-sg
+
+  # ── RDS PostgreSQL ─────────────────────────────────────────────────
+  RdsSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: CementTrack RDS subnet group
+      SubnetIds:
+        - !Ref Subnet1
+        - !Ref Subnet2
+        - !Ref Subnet3
+
+  RdsInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: cementtrack-db
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+      EngineVersion: '16.13'
+      MasterUsername: cementadmin
+      MasterUserPassword: !Ref DBPassword
+      DBName: cementtrack
+      AllocatedStorage: '20'
+      StorageType: gp2
+      MultiAZ: false
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref RdsSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RdsSG
+      BackupRetentionPeriod: 7
+      Tags:
+        - Key: Project
+          Value: CementTrack
+
+  # ── IAM Role for Lambda ────────────────────────────────────────────
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: cementtrack-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: CementTrackPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendRawEmail
+                  - ses:SendEmail
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                Resource: !Sub arn:aws:s3:::cementtrack-receipts-106083617032/*
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  # ── Lambda Function ────────────────────────────────────────────────
+  CementTrackFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: cementtrack-api
+      Runtime: python3.12
+      Handler: app.main.handler
+      Role: !GetAtt LambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key: !Ref LambdaS3Key
+      Timeout: 60
+      MemorySize: 512
+      VpcConfig:
+        SubnetIds:
+          - !Ref Subnet1
+          - !Ref Subnet2
+        SecurityGroupIds:
+          - !Ref LambdaSG
+      Environment:
+        Variables:
+          ENVIRONMENT: production
+          APP_REGION: eu-west-1
+          SES_SENDER_EMAIL: patkatech@gmail.com
+          S3_BUCKET_NAME: !Sub cementtrack-receipts-106083617032
+          DATABASE_URL: !Sub
+            - "postgresql+pg8000://cementadmin:${DBPassword}@${DBHost}/cementtrack"
+            - DBHost: !GetAtt RdsInstance.Endpoint.Address
+      Tags:
+        - Key: Project
+          Value: CementTrack
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/cementtrack-api
+      RetentionInDays: 30
+
+  # ── API Gateway ────────────────────────────────────────────────────
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: cementtrack-api
+      Description: CementTrack REST API
+      EndpointConfiguration:
+        Types: [REGIONAL]
+
+  ProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: '{proxy+}'
+
+  ProxyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ProxyResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:eu-west-1:lambda:path/2015-03-31/functions/${CementTrackFunction.Arn}/invocations
+
+  RootMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !GetAtt RestApi.RootResourceId
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:eu-west-1:lambda:path/2015-03-31/functions/${CementTrackFunction.Arn}/invocations
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: [ProxyMethod, RootMethod]
+    Properties:
+      RestApiId: !Ref RestApi
+      StageName: prod
+
+  LambdaApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CementTrackFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:eu-west-1:106083617032:${RestApi}/*/*
+
+  # ── S3 Receipts Bucket ─────────────────────────────────────────────
+  ReceiptsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub cementtrack-receipts-106083617032
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldReceipts
+            Status: Enabled
+            ExpirationInDays: 365
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway URL
+    Value: !Sub https://${RestApi}.execute-api.eu-west-1.amazonaws.com/prod
+    Export:
+      Name: CementTrackApiUrl
+  RdsEndpoint:
+    Description: RDS endpoint
+    Value: !GetAtt RdsInstance.Endpoint.Address
+    Export:
+      Name: CementTrackRdsEndpoint
+  LambdaFunctionName:
+    Description: Lambda function name
+    Value: !Ref CementTrackFunction
