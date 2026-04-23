@@ -122,7 +122,7 @@ Fully installable on Android and iOS without an app store:
 
 ### User Management & Access Control
 - 8 named staff accounts seeded automatically on first Lambda cold start
-- Initial password `Password123` with **forced change** enforced on first login
+- Initial password `` with **forced change** enforced on first login
 - Default password cannot be reused (validated server-side)
 - Passwords hashed with **bcrypt** (never stored or logged)
 - JWT bearer tokens with 12-hour expiry, validated on every request
